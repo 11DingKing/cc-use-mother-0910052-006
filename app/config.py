@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 
@@ -21,6 +21,37 @@ _engine = None
 _SessionLocal = None
 
 
+def configure_sqlite_engine(engine) -> None:
+    """为任意 SQLite 引擎附加确定性的并发语义（供测试与自定义引擎复用）。"""
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+        # 交给 SQLAlchemy 的 begin 事件显式开启事务
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _begin_immediate(connection):
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
+def _configure_sqlite(engine) -> None:
+    """让默认 SQLite 写事务具备确定性的并发语义：
+
+    - WAL 模式允许读写并发；
+    - busy_timeout 让锁竞争等待而不是立即抛 database is locked；
+    - 所有写事务以 BEGIN IMMEDIATE 开始，一旦开始即持有写锁，
+      跨进程/跨线程的发布、撤回、定时切换在数据库层严格串行，
+      配合部分唯一索引杜绝“两个生效版本”。
+    """
+    if "sqlite" in DATABASE_URL:
+        configure_sqlite_engine(engine)
+
+
 def get_engine():
     """业务模块说明。"""
     global _engine
@@ -30,6 +61,7 @@ def get_engine():
             connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
             echo=os.getenv("SQL_ECHO", "false").lower() == "true",
         )
+        _configure_sqlite(_engine)
     return _engine
 
 
@@ -71,14 +103,16 @@ def init_database():
     from app.entities.analysis_result import Base as AnalysisBase
     from app.entities.watchlist import Base as WatchlistBase
     from app.entities.backtest import Base as BacktestBase
-    
+    from app.entities.strategy import Base as StrategyBase
+
     engine = get_engine()
-    
+
     # 创建所有表
     StockBase.metadata.create_all(bind=engine)
     AnalysisBase.metadata.create_all(bind=engine)
     WatchlistBase.metadata.create_all(bind=engine)
     BacktestBase.metadata.create_all(bind=engine)
+    StrategyBase.metadata.create_all(bind=engine)
 
 # 数据源配置
 DATA_SOURCE_CONFIG = {

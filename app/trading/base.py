@@ -58,7 +58,13 @@ class Order:
     strategy_name: Optional[str] = None
     signal_type: Optional[str] = None     # 买卖点类型，如 BUY_1, SELL_2
     signal_strength: float = 0.0
-    
+
+    # 运行快照留痕：下单时固定，证明该成交使用的是哪一版参数
+    run_id: Optional[str] = None
+    strategy_version_id: Optional[int] = None
+    strategy_version_no: Optional[int] = None
+    strategy_content_hash: Optional[str] = None
+
     def to_dict(self) -> Dict:
         return {
             "order_id": self.order_id,
@@ -78,6 +84,10 @@ class Order:
             "strategy_name": self.strategy_name,
             "signal_type": self.signal_type,
             "signal_strength": self.signal_strength,
+            "run_id": self.run_id,
+            "strategy_version_id": self.strategy_version_id,
+            "strategy_version_no": self.strategy_version_no,
+            "strategy_content_hash": self.strategy_content_hash,
         }
 
 

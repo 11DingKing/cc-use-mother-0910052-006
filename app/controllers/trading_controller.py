@@ -5,9 +5,17 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.services.trading_service import TradingService
+from app.controllers.strategy_controller import strategy_service
 
 router = APIRouter(prefix="/api/trading", tags=["trading"])
-trading_service = TradingService()
+trading_service = TradingService(strategy_service=strategy_service)
+
+
+class StartRunRequest(BaseModel):
+    """启动固定策略版本的自动交易任务。"""
+    strategy_name: str
+    run_id: Optional[str] = None
+    actor: Optional[str] = None
 
 
 class ConnectRequest(BaseModel):
@@ -175,3 +183,35 @@ async def check_stop_loss():
         "triggered_count": len(results),
         "orders": results,
     }
+
+
+@router.post("/runs/start")
+async def start_pinned_run(request: StartRunRequest):
+    """启动任务并固定此刻生效的已批准策略版本与风险设置。
+
+    运行期间即使发布/回滚/撤回了新版本，本任务仍使用启动时的快照。
+    """
+    snapshot = trading_service.start_pinned_run(
+        strategy_name=request.strategy_name,
+        run_id=request.run_id,
+        actor=request.actor,
+    )
+    return {"success": True, "snapshot": snapshot}
+
+
+@router.post("/runs/stop")
+async def stop_pinned_run():
+    """结束当前固定运行；快照保留为不可变历史。"""
+    snapshot = trading_service.stop_pinned_run()
+    if snapshot is None:
+        return {"success": False, "message": "当前没有运行中的固定任务"}
+    return {"success": True, "snapshot": snapshot}
+
+
+@router.get("/runs/pinned")
+async def get_pinned_run():
+    """查看当前任务固定的策略版本与风险设置。"""
+    pin = trading_service.pinned_strategy
+    if pin is None:
+        return {"pinned": False}
+    return {"pinned": True, **pin.to_dict()}

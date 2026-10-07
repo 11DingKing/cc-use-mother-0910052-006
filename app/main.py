@@ -39,12 +39,20 @@ from app.middleware.logging_middleware import register_logging_middleware
 register_logging_middleware(app)
 
 # 注册控制器路由
-from app.controllers import stock_router, analysis_router, watchlist_router, backtest_router, trading_router
+from app.controllers import (
+    stock_router,
+    analysis_router,
+    watchlist_router,
+    backtest_router,
+    trading_router,
+    strategy_router,
+)
 app.include_router(stock_router)
 app.include_router(analysis_router)
 app.include_router(watchlist_router)
 app.include_router(backtest_router)
 app.include_router(trading_router)
+app.include_router(strategy_router)
 
 
 # 健康检查端点
@@ -58,14 +66,27 @@ async def health_check():
 async def startup_event():
     """业务模块说明。"""
     logger.info("缠论量化交易系统启动中...")
-    
+
     # 初始化数据库
     try:
         init_database()
         logger.info("数据库初始化完成")
     except Exception as e:
         logger.error(f"数据库初始化失败: {e}")
-    
+
+    # 策略生命周期：先补发宕机期间到点的定时切换、恢复运行中任务的固定快照，
+    # 再启动定时切换循环。恢复的任务继续使用各自启动时的版本，不会拾取新版本。
+    try:
+        from app.controllers.strategy_controller import strategy_service
+
+        recovered = strategy_service.recover_active_runs()
+        if recovered:
+            logger.info("已恢复 %d 个运行中的策略任务: %s",
+                        len(recovered), recovered)
+        strategy_service.start_scheduler()
+    except Exception as e:
+        logger.error(f"策略生命周期恢复失败: {e}")
+
     logger.info(f"API文档地址: http://{APP_CONFIG['host']}:{APP_CONFIG['port']}/docs")
 
 
@@ -73,3 +94,8 @@ async def startup_event():
 async def shutdown_event():
     """业务模块说明。"""
     logger.info("缠论量化交易系统关闭中...")
+    try:
+        from app.controllers.strategy_controller import strategy_service
+        strategy_service.stop_scheduler()
+    except Exception:
+        pass
