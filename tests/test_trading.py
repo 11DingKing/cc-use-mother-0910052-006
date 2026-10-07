@@ -406,9 +406,27 @@ class TestTradingService:
         assert result is None  # 自动交易默认禁用
     
     def test_auto_trade_enabled(self, service):
-        """业务模块说明。"""
-        service.enable_auto_trade(True)
-        
+        """自动交易只能在启动固定已发布版本的策略任务后开启。"""
+        from app.config import get_engine
+        from app.entities.strategy import Base as StrategyBase
+        from app.services.strategy_lifecycle_service import StrategyLifecycleException
+
+        engine = get_engine()
+        StrategyBase.metadata.create_all(bind=engine)
+
+        # 未固定运行快照时不能开启自动交易
+        with pytest.raises(TradingException):
+            service.enable_auto_trade(True)
+
+        # 走完整草稿 -> 两级批准 -> 发布 -> 启动任务
+        lifecycle = service.lifecycle
+        v = lifecycle.create_draft("chan-unit", {"ma": 5}, {"stop_loss_ratio": 0.08})
+        lifecycle.submit_for_review(v["id"], ["alice", "bob"])
+        lifecycle.record_decision(v["id"], "alice", "approved")
+        lifecycle.record_decision(v["id"], "bob", "approved")
+        lifecycle.publish(v["id"])
+        service.start_strategy_run("chan-unit", run_id="RUN-UNIT")
+
         result = service.execute_signal(
             stock_code="000001",
             signal_type="BUY_1",
@@ -416,6 +434,13 @@ class TestTradingService:
             price=10.0,
             position_ratio=0.1,
         )
-        
+
         assert result is not None
         assert result["status"] == "filled"
+
+        # 订单可追溯到固定版本与批准链
+        prov = lifecycle.order_provenance(result["order_id"])
+        assert prov["version"]["version"] == 1
+        assert [a["reviewer"] for a in prov["approval_chain"]] == ["alice", "bob"]
+
+        StrategyBase.metadata.drop_all(bind=engine)

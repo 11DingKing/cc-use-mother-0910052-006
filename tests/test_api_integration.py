@@ -292,14 +292,27 @@ class TestTradingAPI:
     
     def test_auto_trade_toggle(self, client):
         """业务模块说明。"""
-        client.post("/api/trading/connect", json={
-            "adapter_type": "simulation"
-        })
-        
+        # 未固定已发布版本时，开启自动交易必须被拒绝
+        response = client.post("/api/trading/auto-trade/enable")
+        assert response.status_code == 400
+
+        # 走完草稿 -> 两级批准 -> 发布 -> 启动任务后才能开启
+        ver = client.post("/api/strategies/chan-toggle/versions", json={
+            "params": {"ma": 5}, "risk_params": {},
+        }).json()
+        client.post(f"/api/strategies/versions/{ver['id']}/submit",
+                    json={"reviewers": ["alice", "bob"]})
+        client.post(f"/api/strategies/versions/{ver['id']}/decisions",
+                    json={"reviewer": "alice", "decision": "approved"})
+        client.post(f"/api/strategies/versions/{ver['id']}/decisions",
+                    json={"reviewer": "bob", "decision": "approved"})
+        client.post(f"/api/strategies/versions/{ver['id']}/publish", json={})
+        client.post("/api/trading/strategy-runs/chan-toggle/start", json={"run_id": "RUN-TOGGLE"})
+
         # Enable
         response = client.post("/api/trading/auto-trade/enable")
         assert response.status_code == 200
-        
+
         # Disable
         response = client.post("/api/trading/auto-trade/disable")
         assert response.status_code == 200

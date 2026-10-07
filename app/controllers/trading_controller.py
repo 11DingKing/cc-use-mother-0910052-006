@@ -45,6 +45,16 @@ class SignalTradeRequest(BaseModel):
     position_ratio: float = 0.1
 
 
+class StrategyRunStartRequest(BaseModel):
+    """启动自动交易任务：固定已发布的策略版本与风险设置。"""
+    run_id: Optional[str] = None
+
+
+class StrategyRunStopRequest(BaseModel):
+    """结束自动交易任务。"""
+    status: str = "completed"  # completed / stopped
+
+
 @router.post("/connect")
 async def connect(request: ConnectRequest):
     """业务模块说明。"""
@@ -175,3 +185,35 @@ async def check_stop_loss():
         "triggered_count": len(results),
         "orders": results,
     }
+
+
+@router.post("/strategy-runs/{strategy_key}/start")
+async def start_strategy_run(strategy_key: str, request: StrategyRunStartRequest):
+    """启动自动交易任务：固定策略版本、风险设置与批准依据为运行快照。
+
+    任务运行期间发布的新版本不会影响该任务；该任务的每笔订单都可追溯到批准链。
+    """
+    return trading_service.start_strategy_run(strategy_key, run_id=request.run_id)
+
+
+@router.post("/strategy-runs/stop")
+async def stop_strategy_run(request: StrategyRunStopRequest):
+    """结束当前策略任务；快照与订单审计永久保留。"""
+    return trading_service.stop_strategy_run(status=request.status)
+
+
+@router.get("/strategy-runs/current")
+async def current_strategy_run():
+    """当前任务固定的运行快照（含版本号、内容指纹、风险参数、批准链）。"""
+    snapshot = trading_service.get_run_snapshot()
+    if not snapshot:
+        return {"run_snapshot": None}
+    return {"run_snapshot": snapshot}
+
+
+@router.post("/strategy-runs/heartbeat")
+async def heartbeat_strategy_run():
+    snapshot = trading_service.heartbeat_strategy_run()
+    if not snapshot:
+        return {"message": "当前没有运行中的策略任务"}
+    return snapshot
